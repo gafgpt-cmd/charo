@@ -1,37 +1,27 @@
-# dotfiles
+# charo
 
-Personal configuration for this machine. Tracked with a bare git repository whose
-work tree is `$HOME`, so files stay where they belong and **nothing is tracked
-unless it is added by name**.
+Dictation for XFCE. A tray app and one command that make
+[hyprwhspr](https://github.com/goodroot/hyprwhspr) usable from the desktop —
+click or press a key to dictate, switch engines, and stop it listening to the room.
 
-## Using it
+hyprwhspr ships integrations for Waybar, Noctalia, and GNOME, and writes its state
+to files "for tray script" — but no tray script exists for XFCE. Charo is that
+missing piece.
 
-`dots` is the whole interface — plain git, pointed at this repo:
-
-```sh
-dots status                 # what changed in tracked files
-dots add ~/.config/thing    # start tracking something
-dots commit -m "..."        # signed and scanned automatically
-dots push                   # scanned again before it leaves the machine
-```
-
-## On a fresh machine
+## Install
 
 ```sh
-git clone --bare https://github.com/gafgpt-cmd/dotfiles.git ~/.local/share/dotfiles.git
-git --git-dir=$HOME/.local/share/dotfiles.git --work-tree=$HOME config status.showUntrackedFiles no
-git --git-dir=$HOME/.local/share/dotfiles.git --work-tree=$HOME checkout main
-dictation-setup
+git clone https://github.com/gafgpt-cmd/charo.git
+cd charo
+./install.sh
 ```
 
-`dictation-setup` is idempotent: it checks dependencies, restores the keyboard
-shortcuts, installs the autostart entry, and starts the tray indicator. Run
-`dictation-setup --check` to see what is missing without changing anything.
+The installer links `charo`, `charo-indicator`, and `charo-setup` into
+`~/.local/bin`, installs the tray icons, restores the keyboard shortcuts, adds the
+autostart entry, and starts the tray. It's safe to re-run, and
+`charo-setup --check` reports what's missing without changing anything.
 
-## Dictation
-
-Speech-to-text through [hyprwhspr](https://github.com/goodroot/hyprwhspr), wrapped
-so it can be driven from the keyboard and the system tray.
+## Use
 
 | Key | Action |
 | --- | --- |
@@ -40,33 +30,41 @@ so it can be driven from the keyboard and the system tray.
 | `Shift`+`Super`+`D` | Load/unload the engine to free memory |
 | `Super`+`T` | TV mode on/off |
 
-The tray icon shows state at a glance: dim crossed-out microphone means the engine
+The tray icon shows state at a glance: a dim crossed-out microphone means the engine
 is unloaded, white means ready, **red means recording**, blue means TV mode. Left
-click dictates; right click opens the full menu.
+click dictates; right click opens the full menu. Every action also raises a desktop
+notification, so the keys are never silent.
 
-**TV mode** parks hyprwhspr's spoken start phrases. Without it, a television saying
-"start dictation" begins recording and types what it hears into the focused window.
-The phrases are saved to `~/.local/share/dictation-indicator/wake-words.json` and
-restored when TV mode is switched off.
+Everything is available from the command line too — `charo --help` lists it.
 
-**Engines** — Parakeet (`onnx-asr`) is English-only and loads in about three seconds;
-faster-whisper is multilingual. Both run on CPU here. Switching rewrites
-`transcription_backend` in the hyprwhspr config and restarts the engine, keeping a
-backup of the previous configuration.
+## TV mode
 
-`dictation-ctl --help` documents every command.
+hyprwhspr can sit idle listening for a spoken start phrase. That's convenient until
+a television says it, at which point dictation begins and types what the presenter
+is saying into whatever window has focus.
 
-### Requirements
+TV mode parks those phrases. They're saved to
+`~/.local/share/charo/wake-words.json` and restored when you switch it off, so
+nothing is lost. With TV mode on, dictation starts only from the key or the tray.
+
+## Engines
+
+Two local engines, switchable from the tray or `charo engine switch`:
+
+- **Parakeet** (`onnx-asr`) — English only, loads in about three seconds
+- **faster-whisper** — multilingual, slower to load
+
+Switching rewrites `transcription_backend` in the hyprwhspr config, keeping a backup
+of the previous file, and restarts the engine if it's running.
+
+## Requirements
 
 hyprwhspr, `python3-gi` with GTK 3, `xclip`, `notify-send`, systemd user services,
-and an XFCE session for the keyboard shortcuts and system tray.
+and an XFCE session for the shortcuts and system tray. Both engines run on CPU;
+no GPU is needed.
 
-## Git hardening
+## contrib/git-hooks
 
-Commits are signed with an OpenPGP key, and gitleaks runs at two gates from
-`~/.config/git/hooks`: `pre-commit` scans the staged content, `pre-push` scans every
-commit in the range being pushed. The pre-push gate matters most — it re-checks
-history written earlier or by other tools before anything reaches a remote.
-
-Only the public half of the signing key lives here. The private key, its passphrase,
-and its revocation certificate belong in a password manager, never in this repo.
+Not part of charo — two git hooks kept here because they're useful. `pre-commit`
+scans staged content with gitleaks; `pre-push` scans every commit in the range being
+pushed. Point `core.hooksPath` at the directory to use them.

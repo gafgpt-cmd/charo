@@ -1,4 +1,0 @@
-#!/bin/sh
-set -eu
-systemctl --user start hyprwhspr-on-demand.service
-printf '%s\n' 'Local dictation is on. Use dictation-toggle to record.'
