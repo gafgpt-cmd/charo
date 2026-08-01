@@ -1,0 +1,103 @@
+#!/bin/sh
+# Recreate the dictation setup on this machine: dependencies, keybindings,
+# autostart, tray indicator. Safe to run repeatedly - it only changes what
+# is missing or wrong, and reports what it cannot fix.
+#
+#   dictation-setup            apply the setup
+#   dictation-setup --check    report only, change nothing
+set -eu
+
+check_only=0
+[ "${1:-}" = "--check" ] && check_only=1
+
+bindir="$HOME/.local/bin"
+hyprwhspr="$HOME/.local/share/hyprwhspr/src/bin/hyprwhspr"
+autostart="$HOME/.config/autostart/dictation-indicator.desktop"
+problems=0
+
+ok()   { printf '  ok      %s\n' "$1"; }
+did()  { printf '  applied %s\n' "$1"; }
+bad()  { printf '  MISSING %s\n' "$1"; problems=$((problems + 1)); }
+
+printf 'Dependencies\n'
+for cmd in systemctl xfconf-query python3 xclip notify-send; do
+    if command -v "$cmd" >/dev/null 2>&1; then
+        ok "$cmd"
+    else
+        bad "$cmd - install it through your package manager"
+    fi
+done
+
+if [ -x "$hyprwhspr" ]; then
+    ok "hyprwhspr"
+else
+    bad "hyprwhspr at $hyprwhspr - see https://github.com/goodroot/hyprwhspr"
+fi
+
+if python3 -c "import gi; gi.require_version('Gtk', '3.0'); from gi.repository import Gtk" 2>/dev/null; then
+    ok "python3 gtk bindings"
+else
+    bad "python3 gtk bindings - install python3-gi and gir1.2-gtk-3.0"
+fi
+
+printf '\nKeyboard shortcuts\n'
+# Each line is "<xfce key binding>|<command>". Super+D dictates, the rest
+# manage the engine, switch between Parakeet and Whisper, and toggle TV mode.
+set -- \
+    "<Super>d|$bindir/dictation-ctl record" \
+    "<Shift><Super>d|$bindir/dictation-ctl power" \
+    "<Primary><Super>d|$bindir/dictation-ctl engine switch" \
+    "<Super>t|$bindir/dictation-ctl tv"
+
+for entry in "$@"; do
+    key=${entry%%|*}
+    cmd=${entry#*|}
+    current=$(xfconf-query -c xfce4-keyboard-shortcuts -p "/commands/custom/$key" 2>/dev/null || true)
+    if [ "$current" = "$cmd" ]; then
+        ok "$key"
+    elif [ "$check_only" -eq 1 ]; then
+        bad "$key -> $cmd"
+    else
+        xfconf-query -c xfce4-keyboard-shortcuts -p "/commands/custom/$key" \
+            --create -t string -s "$cmd"
+        did "$key -> $cmd"
+    fi
+done
+
+printf '\nTray indicator\n'
+if [ -f "$autostart" ]; then
+    ok "starts at login"
+elif [ "$check_only" -eq 1 ]; then
+    bad "autostart entry $autostart"
+else
+    mkdir -p "$(dirname "$autostart")"
+    cat >"$autostart" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Dictation indicator
+Comment=Tray toggle for hyprwhspr speech-to-text
+Exec=$bindir/dictation-indicator
+Icon=audio-input-microphone
+Terminal=false
+X-GNOME-Autostart-enabled=true
+EOF
+    did "autostart entry"
+fi
+
+if pgrep -f "bin/dictation-indicato[r]" >/dev/null 2>&1; then
+    ok "running now"
+elif [ "$check_only" -eq 1 ]; then
+    bad "not running - start it with dictation-indicator"
+else
+    systemd-run --user --unit=dictation-indicator \
+        --description="Dictation tray indicator" "$bindir/dictation-indicator" >/dev/null 2>&1
+    did "started"
+fi
+
+printf '\n'
+if [ "$problems" -eq 0 ]; then
+    printf 'Setup complete. Super+D dictates; see dictation-ctl --help.\n'
+else
+    printf '%d item(s) need attention before dictation will work.\n' "$problems"
+    exit 1
+fi

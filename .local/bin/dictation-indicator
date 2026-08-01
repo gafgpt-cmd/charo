@@ -75,14 +75,29 @@ def apply_icon(status_icon, state):
     status_icon.set_from_icon_name("audio-input-microphone")
 
 
-def read_state():
+SERVICE = "hyprwhspr-on-demand.service"
+RUNTIME = os.path.join(
+    os.environ.get("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid()), "hyprwhspr"
+)
+# Poll the engine every Nth tick only. Asking systemd costs a process launch;
+# the recording flag is a single stat, so it can be checked every time.
+ENGINE_EVERY = 5
+
+
+def engine_loaded():
     try:
-        out = subprocess.run(
-            [CTL, "state"], capture_output=True, text=True, timeout=5
-        ).stdout.strip()
+        return (
+            subprocess.run(
+                ["systemctl", "--user", "--quiet", "is-active", SERVICE], timeout=5
+            ).returncode
+            == 0
+        )
     except (OSError, subprocess.SubprocessError):
-        return "off"
-    return out if out in ICONS else "off"
+        return False
+
+
+def is_recording():
+    return os.path.exists(os.path.join(RUNTIME, "recording_status"))
 
 
 def read_tv():
@@ -109,7 +124,9 @@ def read_engine():
 
 class Indicator:
     def __init__(self):
-        self.state = read_state()
+        self.ticks = 0
+        self.engine_on = engine_loaded()
+        self.state = self.poll_state()
         self.engine, self.engine_name = read_engine()
         self.tv = read_tv()
         self.stamp = 0.0
@@ -130,6 +147,18 @@ class Indicator:
         except OSError:
             return 0.0
 
+    def poll_state(self):
+        self.ticks += 1
+        if self.ticks % ENGINE_EVERY == 0:
+            self.engine_on = engine_loaded()
+        if not self.engine_on:
+            return "off"
+        if is_recording():
+            # Recording proves the engine is up, whatever the last poll said.
+            self.engine_on = True
+            return "recording"
+        return "idle"
+
     def refresh(self):
         if self.busy:
             return True
@@ -143,7 +172,7 @@ class Indicator:
             self.engine, self.engine_name = read_engine()
             self.tv = read_tv()
 
-        new = read_state()
+        new = self.poll_state()
         if new != self.state or changed:
             self.state = new
             self.apply(new)
@@ -184,7 +213,8 @@ class Indicator:
         self.busy = False
         self.engine, self.engine_name = read_engine()
         self.tv = read_tv()
-        self.state = read_state()
+        self.engine_on = engine_loaded()
+        self.state = self.poll_state()
         self.apply(self.state)
         return False
 
