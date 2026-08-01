@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+systemctl --user stop hyprwhspr-on-demand.service
+printf '%s\n' 'Local dictation is off; its model process has been stopped.'

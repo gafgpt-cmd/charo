@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+if command -v gitleaks >/dev/null 2>&1; then
+    # --staged scans what this commit will actually contain. --pre-commit scans
+    # the unstaged working tree instead, which leaves committed content unchecked.
+    gitleaks git --staged --redact --no-banner
+else
+    printf '%s\n' 'Commit blocked: gitleaks is unavailable.' >&2
+    exit 1
+fi
+
+# Preserve an optional repository-owned hook without replacing global checks.
+if [ -x .githooks/pre-commit ]; then
+    exec .githooks/pre-commit
+fi

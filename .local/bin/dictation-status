@@ -1,0 +1,6 @@
+#!/bin/sh
+if systemctl --user --quiet is-active hyprwhspr-on-demand.service; then
+    printf '%s\n' 'Local dictation: on'
+    exec /home/toni/.local/share/hyprwhspr/src/bin/hyprwhspr record status
+fi
+printf '%s\n' 'Local dictation: off'

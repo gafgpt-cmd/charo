@@ -1,0 +1,274 @@
+#!/usr/bin/env python3
+"""Panel tray indicator for hyprwhspr dictation.
+
+Left click  - start/stop dictating (loads the engine first if it is off)
+Right click - menu: dictate, turn the engine on/off, status, quit
+
+State comes from `dictation-ctl state`, which is cheap enough to poll:
+  off       engine not loaded (no memory used)
+  idle      engine loaded, waiting
+  recording capturing speech right now
+"""
+
+import fcntl
+import os
+import subprocess
+import sys
+import threading
+import warnings
+
+import gi
+
+# Gtk.StatusIcon is deprecated but is what the Xfce panel tray actually hosts.
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import GdkPixbuf, GLib, Gtk  # noqa: E402
+
+CTL = os.path.expanduser("~/.local/bin/dictation-ctl")
+CONFIG = os.path.expanduser("~/.config/hyprwhspr/config.json")
+ICON_DIR = os.path.expanduser("~/.local/share/dictation-indicator/icons")
+POLL_MS = 800
+
+# Purpose-built icons, so the three states stay distinguishable in any theme:
+# dim crossed mic (off), light mic (ready), red mic (recording), amber (loading).
+ICONS = {
+    "off": ("microphone-sensitivity-muted", "audio-input-microphone-muted"),
+    "idle": ("audio-input-microphone", "audio-input-microphone-symbolic"),
+    "idle-tv": ("audio-input-microphone", "audio-input-microphone-symbolic"),
+    "recording": ("media-record", "audio-input-microphone-high"),
+    "busy": ("content-loading", "view-refresh"),
+}
+
+LABELS = {
+    "off": "Dictation off - click to start dictating",
+    "idle": "Dictation ready - click to dictate",
+    "recording": "Recording - click to stop and insert text",
+    "busy": "Dictation engine loading...",
+}
+
+ENGINE_NAMES = {
+    "onnx-asr": "Parakeet (English)",
+    "faster-whisper": "Whisper (multilingual)",
+}
+
+# The engine to offer switching to, given the one in use.
+ENGINE_OTHER = {"onnx-asr": "whisper", "faster-whisper": "parakeet"}
+
+
+def apply_icon(status_icon, state):
+    path = os.path.join(ICON_DIR, state + ".svg")
+    if os.path.exists(path):
+        try:
+            status_icon.set_from_pixbuf(
+                GdkPixbuf.Pixbuf.new_from_file_at_size(path, 48, 48)
+            )
+            return
+        except GLib.Error:
+            pass
+    theme = Gtk.IconTheme.get_default()
+    for name in ICONS[state]:
+        if theme.has_icon(name):
+            status_icon.set_from_icon_name(name)
+            return
+    status_icon.set_from_icon_name("audio-input-microphone")
+
+
+def read_state():
+    try:
+        out = subprocess.run(
+            [CTL, "state"], capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return "off"
+    return out if out in ICONS else "off"
+
+
+def read_tv():
+    """True when TV mode is on, i.e. spoken wake words are parked."""
+    try:
+        out = subprocess.run(
+            [CTL, "tv", "status"], capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return out == "on"
+
+
+def read_engine():
+    """Return (identifier, friendly name) of the configured speech engine."""
+    try:
+        out = subprocess.run(
+            [CTL, "engine", "id"], capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        out = "unknown"
+    return out, ENGINE_NAMES.get(out, out)
+
+
+class Indicator:
+    def __init__(self):
+        self.state = read_state()
+        self.engine, self.engine_name = read_engine()
+        self.tv = read_tv()
+        self.stamp = 0.0
+        self.busy = False
+
+        self.icon = Gtk.StatusIcon()
+        self.icon.set_title("Dictation")
+        self.apply(self.state)
+        self.icon.connect("activate", self.on_left_click)
+        self.icon.connect("popup-menu", self.on_right_click)
+
+        GLib.timeout_add(POLL_MS, self.refresh)
+
+    # --- state ---------------------------------------------------------
+    def config_stamp(self):
+        try:
+            return os.stat(CONFIG).st_mtime
+        except OSError:
+            return 0.0
+
+    def refresh(self):
+        if self.busy:
+            return True
+
+        # Re-read the engine only when the config file actually changed, so a
+        # switch made from the command line still shows up in the tooltip.
+        stamp = self.config_stamp()
+        changed = stamp != self.stamp
+        if changed:
+            self.stamp = stamp
+            self.engine, self.engine_name = read_engine()
+            self.tv = read_tv()
+
+        new = read_state()
+        if new != self.state or changed:
+            self.state = new
+            self.apply(new)
+        return True
+
+    def apply(self, state):
+        # TV mode gets its own idle colour, so a glance tells you whether the
+        # microphone is still reacting to spoken wake words.
+        visual = "idle-tv" if (state == "idle" and self.tv) else state
+        apply_icon(self.icon, visual)
+        self.icon.set_tooltip_text(
+            "%s\nEngine: %s\nWake words: %s"
+            % (
+                LABELS[state],
+                self.engine_name,
+                "off (TV mode)" if self.tv else "listening",
+            )
+        )
+
+    def run_ctl(self, *args):
+        """Run a dictation-ctl command off the UI thread; it can take a while
+        the first time because the speech model has to load."""
+        if self.busy:
+            return
+        self.busy = True
+        self.apply("busy")
+
+        def worker():
+            try:
+                subprocess.run([CTL, *args], timeout=180)
+            except (OSError, subprocess.SubprocessError):
+                pass
+            GLib.idle_add(self.done)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def done(self):
+        self.busy = False
+        self.engine, self.engine_name = read_engine()
+        self.tv = read_tv()
+        self.state = read_state()
+        self.apply(self.state)
+        return False
+
+    # --- interaction ---------------------------------------------------
+    def on_left_click(self, _icon):
+        self.run_ctl("record")
+
+    def on_tv_toggled(self, item):
+        # set_active() during menu construction does not fire this, so every
+        # call here is a real click.
+        self.run_ctl("tv", "on" if item.get_active() else "off")
+
+    def on_right_click(self, icon, button, time):
+        self.engine, self.engine_name = read_engine()
+        self.tv = read_tv()
+        menu = Gtk.Menu()
+
+        record = Gtk.MenuItem(
+            label="Stop dictating" if self.state == "recording" else "Start dictating"
+        )
+        record.connect("activate", lambda _w: self.run_ctl("record"))
+        menu.append(record)
+
+        power = Gtk.MenuItem(
+            label="Unload engine (free memory)"
+            if self.state != "off"
+            else "Load engine"
+        )
+        power.connect("activate", lambda _w: self.run_ctl("power"))
+        menu.append(power)
+
+        menu.append(Gtk.SeparatorMenuItem())
+
+        tv = Gtk.CheckMenuItem(label="TV mode (ignore spoken wake words)")
+        tv.set_active(self.tv)
+        tv.connect("toggled", self.on_tv_toggled)
+        menu.append(tv)
+
+        menu.append(Gtk.SeparatorMenuItem())
+
+        current = Gtk.MenuItem(label="Using %s" % self.engine_name)
+        current.set_sensitive(False)
+        menu.append(current)
+
+        other = ENGINE_OTHER.get(self.engine)
+        if other:
+            switch = Gtk.MenuItem(
+                label="Switch to %s"
+                % ENGINE_NAMES["onnx-asr" if other == "parakeet" else "faster-whisper"]
+            )
+            switch.connect("activate", lambda _w: self.run_ctl("engine", other))
+            menu.append(switch)
+
+        menu.append(Gtk.SeparatorMenuItem())
+
+        quit_item = Gtk.MenuItem(label="Quit indicator")
+        quit_item.connect("activate", lambda _w: Gtk.main_quit())
+        menu.append(quit_item)
+
+        menu.show_all()
+        menu.popup(None, None, Gtk.StatusIcon.position_menu, icon, button, time)
+
+
+def single_instance():
+    """Hold an exclusive lock for this process's lifetime, so a second launch
+    (autostart plus a manual start, say) does not stack two tray icons."""
+    path = os.path.join(os.path.dirname(ICON_DIR), "instance.lock")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    handle = open(path, "w")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return None
+    return handle
+
+
+def main():
+    lock = single_instance()
+    if lock is None:
+        print("dictation-indicator is already running", file=sys.stderr)
+        return
+    Indicator()
+    Gtk.main()
+
+
+if __name__ == "__main__":
+    main()

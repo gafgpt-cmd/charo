@@ -1,0 +1,332 @@
+#!/bin/sh
+# dictation-ctl - one entry point for hyprwhspr dictation control.
+#
+#   dictation-ctl record            toggle recording (starts the engine if needed)
+#   dictation-ctl power             toggle the running engine on or off
+#   dictation-ctl on|off            load or unload the engine explicitly
+#   dictation-ctl engine            print the engine currently configured
+#   dictation-ctl engine switch     swap between Parakeet and Whisper
+#   dictation-ctl engine parakeet   use Parakeet (English, fast)
+#   dictation-ctl engine whisper    use faster-whisper (multilingual)
+#   dictation-ctl tv                toggle TV mode (stop reacting to wake words)
+#   dictation-ctl tv on|off|status  set or query TV mode
+#   dictation-ctl state             machine-readable: off | idle | recording
+#   dictation-ctl status            human-readable status
+#
+# TV mode exists because dictation normally sits idle listening for a spoken
+# start phrase, and a television will happily say it. Turning TV mode on parks
+# those wake words (they are saved and restored, never lost), so dictation
+# starts only from the key or the tray.
+#
+# Delegates on/off/record to the existing dictation-on/off/toggle/status
+# helpers so their behaviour stays defined in exactly one place. When stdout
+# is not a terminal (hotkeys, tray menu) results become desktop notifications.
+set -eu
+
+service=hyprwhspr-on-demand.service
+runtime="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/hyprwhspr"
+config="$HOME/.config/hyprwhspr/config.json"
+wakewords="$HOME/.local/share/dictation-indicator/wake-words.json"
+bindir=$(dirname "$0")
+
+notify() {
+    # $1 = summary, $2 = body, $3 = icon
+    if [ -t 1 ]; then
+        printf '%s\n' "$1${2:+ - $2}"
+        return
+    fi
+    command -v notify-send >/dev/null 2>&1 || return 0
+    notify-send -a Dictation -i "${3:-audio-input-microphone}" \
+        -h string:x-canonical-private-synchronous:dictation \
+        "$1" "${2:-}" 2>/dev/null || true
+}
+
+state() {
+    if ! systemctl --user --quiet is-active "$service"; then
+        echo off
+    elif [ -e "$runtime/recording_status" ]; then
+        echo recording
+    else
+        echo idle
+    fi
+}
+
+# Engine identifiers as hyprwhspr writes them, and the friendly names we show.
+engine_id() {
+    case "$1" in
+        parakeet|onnx-asr|onnx) echo onnx-asr ;;
+        whisper|faster-whisper|fw) echo faster-whisper ;;
+        *) echo "" ;;
+    esac
+}
+
+engine_name() {
+    case "$1" in
+        onnx-asr) echo "Parakeet (English)" ;;
+        faster-whisper) echo "Whisper (multilingual)" ;;
+        *) echo "$1" ;;
+    esac
+}
+
+engine_current() {
+    python3 - "$config" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1]) as handle:
+        print(json.load(handle).get("transcription_backend", "unknown"))
+except Exception:
+    print("unknown")
+PY
+}
+
+# Rewrite only transcription_backend, preserving every other setting, the file
+# mode, and a restorable copy of the previous configuration.
+engine_write() {
+    python3 - "$config" "$1" <<'PY'
+import json, os, shutil, sys
+
+path, target = sys.argv[1], sys.argv[2]
+with open(path) as handle:
+    config = json.load(handle)
+
+if config.get("transcription_backend") == target:
+    print("unchanged")
+    raise SystemExit(0)
+
+shutil.copy2(path, path + ".pre-engine-switch")
+config["transcription_backend"] = target
+
+tmp = path + ".engine-switch.tmp"
+with open(tmp, "w") as handle:
+    json.dump(config, handle, indent=4)
+    handle.write("\n")
+os.chmod(tmp, 0o600)
+os.replace(tmp, path)
+print("switched")
+PY
+}
+
+engine_set() {
+    target=$(engine_id "$1")
+    if [ -z "$target" ]; then
+        printf 'dictation-ctl: unknown engine "%s" (parakeet | whisper)\n' "$1" >&2
+        exit 2
+    fi
+
+    result=$(engine_write "$target")
+    label=$(engine_name "$target")
+
+    if [ "$result" = unchanged ]; then
+        notify "Already using $label" "" audio-input-microphone
+        return 0
+    fi
+
+    # A loaded engine keeps serving the old model until it is restarted.
+    if [ "$(state)" != off ]; then
+        systemctl --user restart "$service"
+        notify "Switched to $label" "Reloading the speech model" audio-input-microphone
+    else
+        notify "Switched to $label" "Takes effect at the next dictation" audio-input-microphone
+    fi
+}
+
+# TV mode is derived from the live config: no start phrase and no aliases means
+# nothing is listening for a spoken trigger.
+tv_current() {
+    python3 - "$config" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1]) as handle:
+        config = json.load(handle)
+except Exception:
+    print("unknown")
+    raise SystemExit(0)
+
+phrase = str(config.get("voice_start_phrase") or "").strip()
+aliases = [str(a).strip() for a in (config.get("voice_start_aliases") or []) if str(a).strip()]
+print("off" if (phrase or aliases) else "on")
+PY
+}
+
+tv_write() {
+    python3 - "$config" "$wakewords" "$1" <<'PY'
+import json, os, shutil, sys
+
+config_path, saved_path, action = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(config_path) as handle:
+    config = json.load(handle)
+
+phrase = str(config.get("voice_start_phrase") or "").strip()
+aliases = [str(a).strip() for a in (config.get("voice_start_aliases") or []) if str(a).strip()]
+listening = bool(phrase or aliases)
+
+if action == "on":
+    if not listening:
+        print("unchanged")
+        raise SystemExit(0)
+    os.makedirs(os.path.dirname(saved_path), exist_ok=True)
+    with open(saved_path, "w") as handle:
+        json.dump(
+            {
+                "voice_start_phrase": config.get("voice_start_phrase", ""),
+                "voice_start_aliases": config.get("voice_start_aliases", []),
+            },
+            handle,
+            indent=2,
+        )
+    config["voice_start_phrase"] = ""
+    config["voice_start_aliases"] = []
+else:
+    if listening:
+        print("unchanged")
+        raise SystemExit(0)
+    try:
+        with open(saved_path) as handle:
+            saved = json.load(handle)
+    except Exception:
+        print("nosaved")
+        raise SystemExit(0)
+    restored_phrase = saved.get("voice_start_phrase", "")
+    restored_aliases = saved.get("voice_start_aliases", [])
+    if not (str(restored_phrase).strip() or restored_aliases):
+        print("nosaved")
+        raise SystemExit(0)
+    config["voice_start_phrase"] = restored_phrase
+    config["voice_start_aliases"] = restored_aliases
+
+shutil.copy2(config_path, config_path + ".pre-tv-mode")
+tmp = config_path + ".tv-mode.tmp"
+with open(tmp, "w") as handle:
+    json.dump(config, handle, indent=4)
+    handle.write("\n")
+os.chmod(tmp, 0o600)
+os.replace(tmp, config_path)
+print("changed")
+PY
+}
+
+tv_set() {
+    case "$(tv_write "$1")" in
+        unchanged)
+            if [ "$1" = on ]; then
+                notify "TV mode already on" "Wake words are already parked" video-display
+            else
+                notify "TV mode already off" "Wake words are active" audio-input-microphone
+            fi
+            ;;
+        nosaved)
+            notify "No saved wake words to restore" \
+                "Set voice_start_phrase with: hyprwhspr config edit" dialog-error
+            exit 1
+            ;;
+        changed)
+            if [ "$(state)" != off ]; then
+                systemctl --user restart "$service"
+            fi
+            if [ "$1" = on ]; then
+                notify "TV mode on" "Wake words parked - dictate with Super+D only" video-display
+            else
+                notify "TV mode off" "Wake words listening again" audio-input-microphone
+            fi
+            ;;
+    esac
+}
+
+cmd=${1:-status}
+[ $# -gt 0 ] && shift
+
+case "$cmd" in
+    state)
+        state
+        ;;
+    status)
+        printf 'Engine: %s\n' "$(engine_name "$(engine_current)")"
+        printf 'TV mode: %s\n' "$(tv_current)"
+        "$bindir/dictation-status"
+        ;;
+    tv)
+        case "${1:-toggle}" in
+            status|show)
+                tv_current
+                ;;
+            on|off)
+                tv_set "$1"
+                ;;
+            toggle)
+                if [ "$(tv_current)" = on ]; then
+                    tv_set off
+                else
+                    tv_set on
+                fi
+                ;;
+            *)
+                printf 'dictation-ctl: tv takes on, off, toggle or status\n' >&2
+                exit 2
+                ;;
+        esac
+        ;;
+    engine)
+        case "${1:-show}" in
+            show)
+                engine_name "$(engine_current)"
+                ;;
+            id)
+                engine_current
+                ;;
+            switch|toggle)
+                if [ "$(engine_current)" = onnx-asr ]; then
+                    engine_set whisper
+                else
+                    engine_set parakeet
+                fi
+                ;;
+            *)
+                engine_set "$1"
+                ;;
+        esac
+        ;;
+    on)
+        if [ "$(state)" = off ]; then
+            "$bindir/dictation-on" >/dev/null
+            notify "Dictation engine starting" "Loading $(engine_name "$(engine_current)")" audio-input-microphone
+        else
+            notify "Dictation engine already on" "" audio-input-microphone
+        fi
+        ;;
+    off)
+        if [ "$(state)" = off ]; then
+            notify "Dictation engine already off" "" microphone-sensitivity-muted
+        else
+            "$bindir/dictation-off" >/dev/null
+            notify "Dictation engine off" "Memory released" microphone-sensitivity-muted
+        fi
+        ;;
+    power|engine-power)
+        if [ "$(state)" = off ]; then
+            "$0" on
+        else
+            "$0" off
+        fi
+        ;;
+    record)
+        was=$(state)
+        [ "$was" = off ] && notify "Dictation engine starting" "Recording begins once the model is loaded" audio-input-microphone
+        if "$bindir/dictation-toggle" >/dev/null 2>&1; then
+            if [ "$(state)" = recording ]; then
+                notify "Recording" "Speak now - press the key again to stop" media-record
+            else
+                notify "Recording stopped" "Transcribing and inserting text" audio-input-microphone
+            fi
+        else
+            notify "Dictation failed to respond" "Check: journalctl --user -u hyprwhspr-on-demand -n 50" dialog-error
+            exit 1
+        fi
+        ;;
+    -h|--help|help)
+        sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+        ;;
+    *)
+        printf 'dictation-ctl: unknown command "%s" (try --help)\n' "$cmd" >&2
+        exit 2
+        ;;
+esac

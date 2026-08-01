@@ -1,0 +1,11 @@
+#!/bin/sh
+# Your own dotfiles repo: plain git, with the work tree pointed at $HOME.
+#
+#   dots status            what you track has changed?
+#   dots add <path>        start tracking a file
+#   dots commit -m "..."   record it
+#   dots push              publish to github.com/gafgpt-cmd/dotfiles
+#
+# Only files you explicitly add are tracked, so the rest of $HOME - including
+# the previous owner's configuration - stays out of it.
+exec git --git-dir="$HOME/.local/share/dotfiles.git" --work-tree="$HOME" "$@"

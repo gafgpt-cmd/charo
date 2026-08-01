@@ -1,0 +1,42 @@
+#!/bin/sh
+# Last gate before anything leaves this machine: scan the commits being pushed.
+#
+# The pre-commit hook only sees one commit's staged content. This one re-checks
+# every commit in the pushed range, so history written earlier - or by another
+# tool - still gets inspected before it reaches a remote.
+set -eu
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+    printf '%s\n' 'Push blocked: gitleaks is unavailable.' >&2
+    exit 1
+fi
+
+# Git reports deleted or new refs as an all-zero object id, whose width depends
+# on the repository hash algorithm.
+zero=$(git hash-object --stdin </dev/null | tr '0-9a-f' '0')
+
+status=0
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+    # Deleting a remote branch pushes no content.
+    if [ "$local_sha" = "$zero" ]; then
+        continue
+    fi
+
+    if [ "$remote_sha" = "$zero" ]; then
+        # New branch: scan what this push would add, not the whole history.
+        range="$local_sha --not --remotes"
+    else
+        range="$remote_sha..$local_sha"
+    fi
+
+    if ! gitleaks git --redact --no-banner --log-opts="$range"; then
+        status=1
+    fi
+done
+
+if [ "$status" -ne 0 ]; then
+    printf '%s\n' 'Push blocked: gitleaks found something in the commits being pushed.' >&2
+    printf '%s\n' 'Resolve it, or record a reviewed false positive in .gitleaksignore.' >&2
+fi
+
+exit "$status"
