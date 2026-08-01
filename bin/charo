@@ -10,6 +10,7 @@
 #   charo engine whisper    use faster-whisper (99 languages, adds Catalan)
 #   charo tv                toggle TV mode (stop reacting to wake words)
 #   charo tv on|off|status  set or query TV mode
+#   charo keys              show the keyboard shortcuts and what they do
 #   charo state             machine-readable: off | idle | recording
 #   charo status            human-readable status
 #
@@ -48,6 +49,39 @@ state() {
     else
         echo idle
     fi
+}
+
+# Turn an XFCE binding like "<Primary><Super>d" into a readable "Ctrl+Super+D".
+format_combo() {
+    printf '%s\n' "$1" | sed -E '
+        s/<Primary>/Ctrl+/g
+        s/<Control>/Ctrl+/g
+        s/<Super>/Super+/g
+        s/<Shift>/Shift+/g
+        s/<Alt>/Alt+/g
+        s/([[:alpha:]])$/\U\1/
+    '
+}
+
+# The readable key combo XFCE runs for a given charo action, or empty if unbound.
+key_for() {
+    line=$(xfconf-query -c xfce4-keyboard-shortcuts -p /commands/custom -lv 2>/dev/null \
+        | grep -E "/charo $1\$" | head -n1)
+    [ -z "$line" ] && return
+    format_combo "$(basename "$(printf '%s\n' "$line" | awk '{print $1}')")"
+}
+
+# Every charo shortcut as "combo<TAB>description" lines, for the tray and help.
+list_keys() {
+    for spec in \
+        "record:dictate (press again to stop)" \
+        "engine switch:switch engine" \
+        "power:load or unload the engine" \
+        "tv:TV mode on/off"; do
+        action=${spec%%:*}
+        combo=$(key_for "$action")
+        [ -n "$combo" ] && printf '%s\t%s\n' "$combo" "${spec#*:}"
+    done
 }
 
 # Engine identifiers as hyprwhspr writes them, and the names we show.
@@ -258,9 +292,26 @@ case "$cmd" in
         printf 'Engine:  %s\n' "$(engine_name "$(engine_current)")"
         printf 'TV mode: %s\n' "$(tv_current)"
         printf 'State:   %s\n' "$(state)"
+        keys_out=$(list_keys)
+        if [ -n "$keys_out" ]; then
+            printf 'Keys:\n'
+            printf '%s\n' "$keys_out" | while IFS="$(printf '\t')" read -r combo label; do
+                printf '  %-14s %s\n' "$combo" "$label"
+            done
+        fi
         if [ "$(state)" != off ]; then
             "$hyprwhspr" record status
         fi
+        ;;
+    keys)
+        keys_out=$(list_keys)
+        if [ -z "$keys_out" ]; then
+            printf 'No charo shortcuts are set. Run charo-setup to bind them.\n'
+            exit 1
+        fi
+        printf '%s\n' "$keys_out" | while IFS="$(printf '\t')" read -r combo label; do
+            printf '%-14s %s\n' "$combo" "$label"
+        done
         ;;
     engine)
         case "${1:-show}" in
@@ -322,7 +373,9 @@ case "$cmd" in
         fi
         if record_toggle; then
             if [ "$(state)" = recording ]; then
-                notify "Recording" "Speak now - press the key again to stop" media-record
+                stopkey=$(key_for record)
+                notify "Recording" \
+                    "Speak now - press ${stopkey:-your dictation key} again to stop" media-record
             else
                 notify "Recording stopped" "Transcribing and inserting text" audio-input-microphone
             fi

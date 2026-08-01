@@ -132,6 +132,31 @@ def read_tv():
     return out == "on"
 
 
+def read_keys():
+    """The current keyboard shortcuts as (combo, description) pairs, read from
+    charo so they reflect the real XFCE bindings rather than hard-coded defaults."""
+    try:
+        out = subprocess.run(
+            [CTL, "keys"], capture_output=True, text=True, timeout=5
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    pairs = []
+    for line in out.splitlines():
+        combo, _, label = line.strip().partition("  ")
+        if combo:
+            pairs.append((combo.strip(), label.strip()))
+    return pairs
+
+
+def record_key(keys):
+    """The combo bound to dictation, e.g. 'Super+D', or '' if none is set."""
+    for combo, label in keys:
+        if label.startswith("dictate"):
+            return combo
+    return ""
+
+
 def read_engine():
     """Return (identifier, friendly name) of the configured speech engine."""
     try:
@@ -150,6 +175,7 @@ class Indicator:
         self.state = self.poll_state()
         self.engine, self.engine_name = read_engine()
         self.tv = read_tv()
+        self.keys = read_keys()
         self.stamp = 0.0
         self.busy = False
         self.level_timer = None
@@ -226,10 +252,13 @@ class Indicator:
         apply_icon(self.icon, visual)
         if state == "recording":
             self.start_level_meter()
+        combo = record_key(self.keys)
+        dictate = "\n%s or click to dictate" % combo if combo else ""
         self.icon.set_tooltip_text(
-            "%s\nEngine: %s\nWake words: %s"
+            "%s%s\nEngine: %s\nWake words: %s"
             % (
                 LABELS[state],
+                dictate,
                 self.engine_name,
                 "off (TV mode)" if self.tv else "listening",
             )
@@ -273,11 +302,14 @@ class Indicator:
     def on_right_click(self, icon, button, time):
         self.engine, self.engine_name = read_engine()
         self.tv = read_tv()
+        self.keys = read_keys()
         menu = Gtk.Menu()
 
-        record = Gtk.MenuItem(
-            label="Stop dictating" if self.state == "recording" else "Start dictating"
-        )
+        combo = record_key(self.keys)
+        record_label = "Stop dictating" if self.state == "recording" else "Start dictating"
+        if combo:
+            record_label += "   (%s)" % combo
+        record = Gtk.MenuItem(label=record_label)
         record.connect("activate", lambda _w: self.run_ctl("record"))
         menu.append(record)
 
@@ -312,6 +344,16 @@ class Indicator:
             menu.append(switch)
 
         menu.append(Gtk.SeparatorMenuItem())
+
+        if self.keys:
+            heading = Gtk.MenuItem(label="Keyboard shortcuts")
+            heading.set_sensitive(False)
+            menu.append(heading)
+            for shortcut, label in self.keys:
+                item = Gtk.MenuItem(label="   %s   %s" % (shortcut, label))
+                item.set_sensitive(False)
+                menu.append(item)
+            menu.append(Gtk.SeparatorMenuItem())
 
         quit_item = Gtk.MenuItem(label="Quit indicator")
         quit_item.connect("activate", lambda _w: Gtk.main_quit())
