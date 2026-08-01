@@ -6,8 +6,8 @@
 #   charo on | off          load or unload the engine explicitly
 #   charo engine            print the engine in use
 #   charo engine switch     swap between Parakeet and Whisper
-#   charo engine parakeet   use Parakeet (English, fast)
-#   charo engine whisper    use faster-whisper (multilingual)
+#   charo engine parakeet   use Parakeet (auto-detects 25 EU languages)
+#   charo engine whisper    use faster-whisper (99 languages, adds Catalan)
 #   charo tv                toggle TV mode (stop reacting to wake words)
 #   charo tv on|off|status  set or query TV mode
 #   charo state             machine-readable: off | idle | recording
@@ -61,8 +61,8 @@ engine_id() {
 
 engine_name() {
     case "$1" in
-        onnx-asr) echo "Parakeet (English)" ;;
-        faster-whisper) echo "Whisper (multilingual)" ;;
+        onnx-asr) echo "Parakeet (auto, 25 languages)" ;;
+        faster-whisper) echo "Whisper (99 languages, adds Catalan)" ;;
         *) echo "$1" ;;
     esac
 }
