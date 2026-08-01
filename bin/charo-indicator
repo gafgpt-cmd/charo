@@ -30,6 +30,9 @@ CTL = os.path.expanduser("~/.local/bin/charo")
 CONFIG = os.path.expanduser("~/.config/hyprwhspr/config.json")
 ICON_DIR = os.path.expanduser("~/.local/share/charo/icons")
 POLL_MS = 800
+# While recording, the icon animates from the microphone level at this rate.
+LEVEL_MS = 120
+LEVEL_STEPS = 4
 
 # Purpose-built icons, so the three states stay distinguishable in any theme:
 # dim crossed mic (off), light mic (ready), red mic (recording), amber (loading).
@@ -40,6 +43,10 @@ ICONS = {
     "recording": ("media-record", "audio-input-microphone-high"),
     "busy": ("content-loading", "view-refresh"),
 }
+
+# Level steps of the recording icon, drawn as a microphone filling up.
+for _step in range(LEVEL_STEPS + 1):
+    ICONS["recording-%d" % _step] = ICONS["recording"]
 
 LABELS = {
     "off": "Dictation off - click to start dictating",
@@ -100,6 +107,20 @@ def is_recording():
     return os.path.exists(os.path.join(RUNTIME, "recording_status"))
 
 
+# hyprwhspr writes a 0.000-1.000 level here every 100ms while recording, and
+# removes it when it stops. Reading it is one small file read, so the meter can
+# animate without costing anything when nothing is being recorded.
+LEVEL_FILE = os.path.join(RUNTIME, "audio_level")
+
+
+def read_level():
+    try:
+        with open(LEVEL_FILE) as handle:
+            return max(0.0, min(1.0, float(handle.read().strip() or 0)))
+    except (OSError, ValueError):
+        return 0.0
+
+
 def read_tv():
     """True when TV mode is on, i.e. spoken wake words are parked."""
     try:
@@ -131,6 +152,8 @@ class Indicator:
         self.tv = read_tv()
         self.stamp = 0.0
         self.busy = False
+        self.level_timer = None
+        self.level_step = -1
 
         self.icon = Gtk.StatusIcon()
         self.icon.set_title("Charo")
@@ -178,11 +201,31 @@ class Indicator:
             self.apply(new)
         return True
 
+    # --- level meter ----------------------------------------------------
+    def level_tick(self):
+        """Animate the icon from the live microphone level. Returns False to
+        cancel itself as soon as recording ends, so idle costs nothing."""
+        if self.state != "recording":
+            self.level_timer = None
+            return False
+        step = int(round(read_level() * LEVEL_STEPS))
+        if step != self.level_step:
+            self.level_step = step
+            apply_icon(self.icon, "recording-%d" % step)
+        return True
+
+    def start_level_meter(self):
+        if self.level_timer is None:
+            self.level_step = -1
+            self.level_timer = GLib.timeout_add(LEVEL_MS, self.level_tick)
+
     def apply(self, state):
         # TV mode gets its own idle colour, so a glance tells you whether the
         # microphone is still reacting to spoken wake words.
         visual = "idle-tv" if (state == "idle" and self.tv) else state
         apply_icon(self.icon, visual)
+        if state == "recording":
+            self.start_level_meter()
         self.icon.set_tooltip_text(
             "%s\nEngine: %s\nWake words: %s"
             % (
