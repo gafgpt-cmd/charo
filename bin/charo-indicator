@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Panel tray indicator for hyprwhspr dictation.
+"""Charo - panel tray indicator for hyprwhspr dictation.
 
 Left click  - start/stop dictating (loads the engine first if it is off)
 Right click - menu: dictate, turn the engine on/off, status, quit
 
-State comes from `dictation-ctl state`, which is cheap enough to poll:
+State comes from `charo state`, which is cheap enough to poll:
   off       engine not loaded (no memory used)
   idle      engine loaded, waiting
   recording capturing speech right now
@@ -26,9 +26,9 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import GdkPixbuf, GLib, Gtk  # noqa: E402
 
-CTL = os.path.expanduser("~/.local/bin/dictation-ctl")
+CTL = os.path.expanduser("~/.local/bin/charo")
 CONFIG = os.path.expanduser("~/.config/hyprwhspr/config.json")
-ICON_DIR = os.path.expanduser("~/.local/share/dictation-indicator/icons")
+ICON_DIR = os.path.expanduser("~/.local/share/charo/icons")
 POLL_MS = 800
 
 # Purpose-built icons, so the three states stay distinguishable in any theme:
@@ -133,7 +133,7 @@ class Indicator:
         self.busy = False
 
         self.icon = Gtk.StatusIcon()
-        self.icon.set_title("Dictation")
+        self.icon.set_title("Charo")
         self.apply(self.state)
         self.icon.connect("activate", self.on_left_click)
         self.icon.connect("popup-menu", self.on_right_click)
@@ -193,7 +193,7 @@ class Indicator:
         )
 
     def run_ctl(self, *args):
-        """Run a dictation-ctl command off the UI thread; it can take a while
+        """Run a charo command off the UI thread; it can take a while
         the first time because the speech model has to load."""
         if self.busy:
             return
@@ -294,7 +294,7 @@ def single_instance():
 def main():
     lock = single_instance()
     if lock is None:
-        print("dictation-indicator is already running", file=sys.stderr)
+        print("charo-indicator is already running", file=sys.stderr)
         return
     Indicator()
     Gtk.main()

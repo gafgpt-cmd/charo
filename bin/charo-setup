@@ -1,10 +1,11 @@
 #!/bin/sh
-# Recreate the dictation setup on this machine: dependencies, keybindings,
-# autostart, tray indicator. Safe to run repeatedly - it only changes what
-# is missing or wrong, and reports what it cannot fix.
+# charo-setup - check dependencies and wire charo into the desktop.
 #
-#   dictation-setup            apply the setup
-#   dictation-setup --check    report only, change nothing
+#   charo-setup            apply the setup
+#   charo-setup --check    report only, change nothing
+#
+# Safe to run repeatedly: it only changes what is missing or wrong, and reports
+# what it cannot fix. install.sh runs this after putting the files in place.
 set -eu
 
 check_only=0
@@ -12,12 +13,13 @@ check_only=0
 
 bindir="$HOME/.local/bin"
 hyprwhspr="$HOME/.local/share/hyprwhspr/src/bin/hyprwhspr"
-autostart="$HOME/.config/autostart/dictation-indicator.desktop"
+autostart="$HOME/.config/autostart/charo-indicator.desktop"
+icons="$HOME/.local/share/charo/icons"
 problems=0
 
-ok()   { printf '  ok      %s\n' "$1"; }
-did()  { printf '  applied %s\n' "$1"; }
-bad()  { printf '  MISSING %s\n' "$1"; problems=$((problems + 1)); }
+ok()  { printf '  ok      %s\n' "$1"; }
+did() { printf '  applied %s\n' "$1"; }
+bad() { printf '  MISSING %s\n' "$1"; problems=$((problems + 1)); }
 
 printf 'Dependencies\n'
 for cmd in systemctl xfconf-query python3 xclip notify-send; do
@@ -40,14 +42,28 @@ else
     bad "python3 gtk bindings - install python3-gi and gir1.2-gtk-3.0"
 fi
 
+printf '\nInstalled files\n'
+for file in charo charo-indicator charo-setup; do
+    if [ -x "$bindir/$file" ]; then
+        ok "$bindir/$file"
+    else
+        bad "$bindir/$file - run install.sh from the charo checkout"
+    fi
+done
+
+if [ -d "$icons" ] && [ -n "$(ls -A "$icons" 2>/dev/null)" ]; then
+    ok "tray icons"
+else
+    bad "tray icons in $icons - run install.sh"
+fi
+
 printf '\nKeyboard shortcuts\n'
-# Each line is "<xfce key binding>|<command>". Super+D dictates, the rest
-# manage the engine, switch between Parakeet and Whisper, and toggle TV mode.
+# Each entry is "<xfce binding>|<command>".
 set -- \
-    "<Super>d|$bindir/dictation-ctl record" \
-    "<Shift><Super>d|$bindir/dictation-ctl power" \
-    "<Primary><Super>d|$bindir/dictation-ctl engine switch" \
-    "<Super>t|$bindir/dictation-ctl tv"
+    "<Super>d|$bindir/charo record" \
+    "<Shift><Super>d|$bindir/charo power" \
+    "<Primary><Super>d|$bindir/charo engine switch" \
+    "<Super>t|$bindir/charo tv"
 
 for entry in "$@"; do
     key=${entry%%|*}
@@ -74,9 +90,9 @@ else
     cat >"$autostart" <<EOF
 [Desktop Entry]
 Type=Application
-Name=Dictation indicator
-Comment=Tray toggle for hyprwhspr speech-to-text
-Exec=$bindir/dictation-indicator
+Name=Charo
+Comment=Dictation tray control for hyprwhspr
+Exec=$bindir/charo-indicator
 Icon=audio-input-microphone
 Terminal=false
 X-GNOME-Autostart-enabled=true
@@ -84,20 +100,20 @@ EOF
     did "autostart entry"
 fi
 
-if pgrep -f "bin/dictation-indicato[r]" >/dev/null 2>&1; then
+if pgrep -f "bin/charo-indicato[r]" >/dev/null 2>&1; then
     ok "running now"
 elif [ "$check_only" -eq 1 ]; then
-    bad "not running - start it with dictation-indicator"
+    bad "not running - start it with charo-indicator"
 else
-    systemd-run --user --unit=dictation-indicator \
-        --description="Dictation tray indicator" "$bindir/dictation-indicator" >/dev/null 2>&1
+    systemd-run --user --unit=charo-indicator \
+        --description="Charo dictation tray" "$bindir/charo-indicator" >/dev/null 2>&1
     did "started"
 fi
 
 printf '\n'
 if [ "$problems" -eq 0 ]; then
-    printf 'Setup complete. Super+D dictates; see dictation-ctl --help.\n'
+    printf 'Charo is ready. Super+D dictates; see charo --help.\n'
 else
-    printf '%d item(s) need attention before dictation will work.\n' "$problems"
+    printf '%d item(s) need attention.\n' "$problems"
     exit 1
 fi

@@ -1,33 +1,32 @@
 #!/bin/sh
-# dictation-ctl - one entry point for hyprwhspr dictation control.
+# charo - dictation for XFCE, driving hyprwhspr from the keyboard and tray.
 #
-#   dictation-ctl record            toggle recording (starts the engine if needed)
-#   dictation-ctl power             toggle the running engine on or off
-#   dictation-ctl on|off            load or unload the engine explicitly
-#   dictation-ctl engine            print the engine currently configured
-#   dictation-ctl engine switch     swap between Parakeet and Whisper
-#   dictation-ctl engine parakeet   use Parakeet (English, fast)
-#   dictation-ctl engine whisper    use faster-whisper (multilingual)
-#   dictation-ctl tv                toggle TV mode (stop reacting to wake words)
-#   dictation-ctl tv on|off|status  set or query TV mode
-#   dictation-ctl state             machine-readable: off | idle | recording
-#   dictation-ctl status            human-readable status
+#   charo record            toggle recording (starts the engine if needed)
+#   charo power             toggle the engine on or off
+#   charo on | off          load or unload the engine explicitly
+#   charo engine            print the engine in use
+#   charo engine switch     swap between Parakeet and Whisper
+#   charo engine parakeet   use Parakeet (English, fast)
+#   charo engine whisper    use faster-whisper (multilingual)
+#   charo tv                toggle TV mode (stop reacting to wake words)
+#   charo tv on|off|status  set or query TV mode
+#   charo state             machine-readable: off | idle | recording
+#   charo status            human-readable status
 #
 # TV mode exists because dictation normally sits idle listening for a spoken
 # start phrase, and a television will happily say it. Turning TV mode on parks
-# those wake words (they are saved and restored, never lost), so dictation
-# starts only from the key or the tray.
+# those wake words - saved and restored, never lost - so dictation starts only
+# from the key or the tray.
 #
-# Delegates on/off/record to the existing dictation-on/off/toggle/status
-# helpers so their behaviour stays defined in exactly one place. When stdout
-# is not a terminal (hotkeys, tray menu) results become desktop notifications.
+# When stdout is not a terminal (hotkeys, tray menu) results are reported as
+# desktop notifications instead of printed.
 set -eu
 
-service=hyprwhspr-on-demand.service
+service="hyprwhspr-on-demand.service"
+hyprwhspr="$HOME/.local/share/hyprwhspr/src/bin/hyprwhspr"
 runtime="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/hyprwhspr"
 config="$HOME/.config/hyprwhspr/config.json"
-wakewords="$HOME/.local/share/dictation-indicator/wake-words.json"
-bindir=$(dirname "$0")
+wakewords="$HOME/.local/share/charo/wake-words.json"
 
 notify() {
     # $1 = summary, $2 = body, $3 = icon
@@ -36,8 +35,8 @@ notify() {
         return
     fi
     command -v notify-send >/dev/null 2>&1 || return 0
-    notify-send -a Dictation -i "${3:-audio-input-microphone}" \
-        -h string:x-canonical-private-synchronous:dictation \
+    notify-send -a Charo -i "${3:-audio-input-microphone}" \
+        -h string:x-canonical-private-synchronous:charo \
         "$1" "${2:-}" 2>/dev/null || true
 }
 
@@ -51,7 +50,7 @@ state() {
     fi
 }
 
-# Engine identifiers as hyprwhspr writes them, and the friendly names we show.
+# Engine identifiers as hyprwhspr writes them, and the names we show.
 engine_id() {
     case "$1" in
         parakeet|onnx-asr|onnx) echo onnx-asr ;;
@@ -109,14 +108,12 @@ PY
 engine_set() {
     target=$(engine_id "$1")
     if [ -z "$target" ]; then
-        printf 'dictation-ctl: unknown engine "%s" (parakeet | whisper)\n' "$1" >&2
+        printf 'charo: unknown engine "%s" (parakeet | whisper)\n' "$1" >&2
         exit 2
     fi
 
-    result=$(engine_write "$target")
     label=$(engine_name "$target")
-
-    if [ "$result" = unchanged ]; then
+    if [ "$(engine_write "$target")" = unchanged ]; then
         notify "Already using $label" "" audio-input-microphone
         return 0
     fi
@@ -232,6 +229,24 @@ tv_set() {
     esac
 }
 
+# The engine may still be loading its model, so retry until it answers.
+record_toggle() {
+    if ! systemctl --user --quiet is-active "$service"; then
+        systemctl --user start "$service"
+    fi
+
+    i=0
+    while [ "$i" -lt 120 ]; do
+        output=$("$hyprwhspr" record toggle 2>&1) || true
+        case "$output" in
+            *'[SUCCESS]'*) return 0 ;;
+        esac
+        sleep 0.25
+        i=$((i + 1))
+    done
+    return 1
+}
+
 cmd=${1:-status}
 [ $# -gt 0 ] && shift
 
@@ -240,18 +255,31 @@ case "$cmd" in
         state
         ;;
     status)
-        printf 'Engine: %s\n' "$(engine_name "$(engine_current)")"
+        printf 'Engine:  %s\n' "$(engine_name "$(engine_current)")"
         printf 'TV mode: %s\n' "$(tv_current)"
-        "$bindir/dictation-status"
+        printf 'State:   %s\n' "$(state)"
+        if [ "$(state)" != off ]; then
+            "$hyprwhspr" record status
+        fi
+        ;;
+    engine)
+        case "${1:-show}" in
+            show) engine_name "$(engine_current)" ;;
+            id)   engine_current ;;
+            switch|toggle)
+                if [ "$(engine_current)" = onnx-asr ]; then
+                    engine_set whisper
+                else
+                    engine_set parakeet
+                fi
+                ;;
+            *) engine_set "$1" ;;
+        esac
         ;;
     tv)
         case "${1:-toggle}" in
-            status|show)
-                tv_current
-                ;;
-            on|off)
-                tv_set "$1"
-                ;;
+            status|show) tv_current ;;
+            on|off) tv_set "$1" ;;
             toggle)
                 if [ "$(tv_current)" = on ]; then
                     tv_set off
@@ -260,48 +288,28 @@ case "$cmd" in
                 fi
                 ;;
             *)
-                printf 'dictation-ctl: tv takes on, off, toggle or status\n' >&2
+                printf 'charo: tv takes on, off, toggle or status\n' >&2
                 exit 2
-                ;;
-        esac
-        ;;
-    engine)
-        case "${1:-show}" in
-            show)
-                engine_name "$(engine_current)"
-                ;;
-            id)
-                engine_current
-                ;;
-            switch|toggle)
-                if [ "$(engine_current)" = onnx-asr ]; then
-                    engine_set whisper
-                else
-                    engine_set parakeet
-                fi
-                ;;
-            *)
-                engine_set "$1"
                 ;;
         esac
         ;;
     on)
         if [ "$(state)" = off ]; then
-            "$bindir/dictation-on" >/dev/null
-            notify "Dictation engine starting" "Loading $(engine_name "$(engine_current)")" audio-input-microphone
+            systemctl --user start "$service"
+            notify "Dictation starting" "Loading $(engine_name "$(engine_current)")" audio-input-microphone
         else
-            notify "Dictation engine already on" "" audio-input-microphone
+            notify "Dictation already on" "" audio-input-microphone
         fi
         ;;
     off)
         if [ "$(state)" = off ]; then
-            notify "Dictation engine already off" "" microphone-sensitivity-muted
+            notify "Dictation already off" "" microphone-sensitivity-muted
         else
-            "$bindir/dictation-off" >/dev/null
-            notify "Dictation engine off" "Memory released" microphone-sensitivity-muted
+            systemctl --user stop "$service"
+            notify "Dictation off" "Memory released" microphone-sensitivity-muted
         fi
         ;;
-    power|engine-power)
+    power)
         if [ "$(state)" = off ]; then
             "$0" on
         else
@@ -309,24 +317,26 @@ case "$cmd" in
         fi
         ;;
     record)
-        was=$(state)
-        [ "$was" = off ] && notify "Dictation engine starting" "Recording begins once the model is loaded" audio-input-microphone
-        if "$bindir/dictation-toggle" >/dev/null 2>&1; then
+        if [ "$(state)" = off ]; then
+            notify "Dictation starting" "Recording begins once the model is loaded" audio-input-microphone
+        fi
+        if record_toggle; then
             if [ "$(state)" = recording ]; then
                 notify "Recording" "Speak now - press the key again to stop" media-record
             else
                 notify "Recording stopped" "Transcribing and inserting text" audio-input-microphone
             fi
         else
-            notify "Dictation failed to respond" "Check: journalctl --user -u hyprwhspr-on-demand -n 50" dialog-error
+            notify "Dictation did not respond" \
+                "Check: journalctl --user -u hyprwhspr-on-demand -n 50" dialog-error
             exit 1
         fi
         ;;
     -h|--help|help)
-        sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
         ;;
     *)
-        printf 'dictation-ctl: unknown command "%s" (try --help)\n' "$cmd" >&2
+        printf 'charo: unknown command "%s" (try --help)\n' "$cmd" >&2
         exit 2
         ;;
 esac

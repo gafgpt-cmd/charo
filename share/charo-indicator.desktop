@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Charo
+Comment=Dictation tray control for hyprwhspr
+Exec=charo-indicator
+Icon=audio-input-microphone
+Terminal=false
+X-GNOME-Autostart-enabled=true
