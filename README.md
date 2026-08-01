@@ -57,6 +57,22 @@ Two local engines, switchable from the tray or `charo engine switch`:
 Switching rewrites `transcription_backend` in the hyprwhspr config, keeping a backup
 of the previous file, and restarts the engine if it's running.
 
+## Dictation settings
+
+`charo-setup` also applies a few hyprwhspr settings that make dictation reliable,
+merging them into the config without touching your other keys. They live in
+`share/dictation-defaults.json` so the tuning is version-controlled and travels to
+a new machine:
+
+- `recording_mode: toggle` — press to start, press again (or say "stop dictation")
+  to stop. No hold required.
+- `silence_timeout: 0` — no silence auto-stop, so a pause to think never ends the
+  recording; it runs as long as you need.
+- `onnx_asr_use_vad: false` — Parakeet's long-audio VAD path dropped real
+  recordings to a fragment (a 31-second recording came back as 57 characters). The
+  direct path transcribes the whole recording reliably at any length, so the VAD
+  stays off. Re-enable it only if a future hyprwhspr fixes that path.
+
 ## Requirements
 
 hyprwhspr, `python3-gi` with GTK 3, `xclip`, `notify-send`, systemd user services,

@@ -15,7 +15,10 @@ bindir="$HOME/.local/bin"
 hyprwhspr="$HOME/.local/share/hyprwhspr/src/bin/hyprwhspr"
 autostart="$HOME/.config/autostart/charo-indicator.desktop"
 icons="$HOME/.local/share/charo/icons"
+defaults="$HOME/.local/share/charo/dictation-defaults.json"
+hyprwhspr_config="$HOME/.config/hyprwhspr/config.json"
 problems=0
+config_changed=0
 
 ok()  { printf '  ok      %s\n' "$1"; }
 did() { printf '  applied %s\n' "$1"; }
@@ -79,6 +82,64 @@ for entry in "$@"; do
         did "$key -> $cmd"
     fi
 done
+
+printf '\nDictation settings\n'
+# These make dictation reliable: press-to-start/stop (toggle), no silence
+# auto-stop, and the onnx VAD off (its long-audio path dropped real recordings
+# to a fragment). Merged into hyprwhspr's config without touching other keys.
+if [ ! -f "$defaults" ]; then
+    bad "dictation defaults $defaults - run install.sh"
+elif [ ! -f "$hyprwhspr_config" ]; then
+    bad "hyprwhspr config $hyprwhspr_config - run hyprwhspr setup first"
+else
+    result=$(python3 - "$hyprwhspr_config" "$defaults" "$check_only" <<'PY'
+import json, os, shutil, sys
+
+config_path, defaults_path, check_only = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
+try:
+    with open(config_path) as handle:
+        config = json.load(handle)
+    with open(defaults_path) as handle:
+        wanted = json.load(handle)
+except (OSError, ValueError) as error:
+    print("ERROR " + str(error))
+    raise SystemExit(0)
+
+diff = {key: value for key, value in wanted.items() if config.get(key) != value}
+if not diff:
+    print("ok")
+    raise SystemExit(0)
+
+summary = ", ".join(f"{key}={json.dumps(value)}" for key, value in diff.items())
+if check_only:
+    print("MISSING " + summary)
+    raise SystemExit(0)
+
+shutil.copy2(config_path, config_path + ".pre-charo-defaults")
+config.update(diff)
+tmp = config_path + ".charo-defaults.tmp"
+with open(tmp, "w") as handle:
+    json.dump(config, handle, indent=4)
+    handle.write("\n")
+os.chmod(tmp, 0o600)
+os.replace(tmp, config_path)
+print("applied " + summary)
+PY
+)
+    case "$result" in
+        ok) ok "recording mode, silence timeout, VAD" ;;
+        "applied "*) did "${result#applied }"; config_changed=1 ;;
+        "MISSING "*) bad "${result#MISSING }" ;;
+        *) bad "${result#ERROR }" ;;
+    esac
+fi
+
+# hyprwhspr reads its config at startup, so a running engine needs a restart
+# to pick up a change made here.
+if [ "$config_changed" -eq 1 ] && systemctl --user --quiet is-active hyprwhspr-on-demand.service; then
+    systemctl --user restart hyprwhspr-on-demand.service
+    did "restarted the engine to apply new settings"
+fi
 
 printf '\nTray indicator\n'
 if [ -f "$autostart" ]; then
