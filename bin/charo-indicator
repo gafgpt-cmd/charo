@@ -49,8 +49,8 @@ LABELS = {
 }
 
 ENGINE_NAMES = {
-    "onnx-asr": "Parakeet (English)",
-    "faster-whisper": "Whisper (multilingual)",
+    "onnx-asr": "Parakeet (auto, 25 languages)",
+    "faster-whisper": "Whisper (99 languages, adds Catalan)",
 }
 
 # The engine to offer switching to, given the one in use.

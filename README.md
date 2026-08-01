@@ -51,8 +51,8 @@ nothing is lost. With TV mode on, dictation starts only from the key or the tray
 
 Two local engines, switchable from the tray or `charo engine switch`:
 
-- **Parakeet** (`onnx-asr`) — English only, loads in about three seconds
-- **faster-whisper** — multilingual, slower to load
+- **Parakeet** (`onnx-asr`) — 25 European languages with automatic detection, including English, Spanish, French, Italian, Portuguese and Russian. Loads in about three seconds. No Catalan.
+- **faster-whisper** — 99 languages including Catalan, and the only option that can translate speech to English. Slower to load.
 
 Switching rewrites `transcription_backend` in the hyprwhspr config, keeping a backup
 of the previous file, and restarts the engine if it's running.
