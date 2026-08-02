@@ -26,7 +26,7 @@ autostart entry, and starts the tray. It's safe to re-run, and
 
 | Key | Action |
 | --- | --- |
-| `Super`+`D` | Start/stop dictating (loads the engine if needed) |
+| `Super`+`Space` | Start/stop dictating (loads the engine if needed) |
 | `Ctrl`+`Super`+`D` | Switch engine: Parakeet ↔ Whisper |
 | `Shift`+`Super`+`D` | Load/unload the engine to free memory |
 | `Super`+`T` | TV mode on/off |
