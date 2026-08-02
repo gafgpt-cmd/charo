@@ -32,13 +32,14 @@ recording_start_icon="$HOME/.local/share/charo/icons/recording-start.svg"
 recording_stop_icon="$HOME/.local/share/charo/icons/recording.svg"
 
 notify() {
-    # $1 = summary, $2 = body, $3 = icon, $4 = urgency
+    # $1 = summary, $2 = body, $3 = icon, $4 = urgency, $5 = timeout (ms)
     if [ -t 1 ]; then
         printf '%s\n' "$1${2:+ - $2}"
         return
     fi
     command -v notify-send >/dev/null 2>&1 || return 0
-    notify-send -a Charo -u "${4:-normal}" -i "${3:-audio-input-microphone}" \
+    notify-send -a Charo -u "${4:-normal}" -t "${5:-5000}" \
+        -i "${3:-audio-input-microphone}" \
         -h string:x-canonical-private-synchronous:charo \
         "$1" "${2:-}" 2>/dev/null || true
 }
@@ -379,7 +380,7 @@ case "$cmd" in
                 notify "Recording started" \
                     "Speak now - press ${stopkey:-your dictation key} again to stop" "$recording_start_icon" low
             else
-                notify "Recording stopped" "Transcribing and inserting text" "$recording_stop_icon" critical
+                notify "Recording stopped" "Transcribing and inserting text" "$recording_stop_icon" normal 3000
             fi
         else
             notify "Dictation did not respond" \
