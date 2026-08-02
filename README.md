@@ -1,6 +1,7 @@
 # charo
 
-Dictation for XFCE. A tray app and one command that make
+Linux XFCE system-tray toggle for [hyprwhspr](https://github.com/goodroot/hyprwhspr)
+dictation. A tray app and one command that make
 [hyprwhspr](https://github.com/goodroot/hyprwhspr) usable from the desktop —
 click or press a key to dictate, switch engines, and stop it listening to the room.
 
@@ -33,7 +34,9 @@ autostart entry, and starts the tray. It's safe to re-run, and
 The tray icon shows state at a glance: a dim crossed-out microphone means the engine
 is unloaded, white means ready, **red means recording**, blue means TV mode. Left
 click dictates; right click opens the full menu. Every action also raises a desktop
-notification, so the keys are never silent.
+notification, so the keys are never silent. Recording-start and recording-stop
+notifications use equal-length titles; informational start urgency is blue-style,
+while critical stop urgency is red-style in standard notification themes.
 
 Everything is available from the command line too — `charo --help` lists it.
 
