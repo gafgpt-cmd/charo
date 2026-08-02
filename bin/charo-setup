@@ -63,7 +63,7 @@ fi
 printf '\nKeyboard shortcuts\n'
 # Each entry is "<xfce binding>|<command>".
 set -- \
-    "<Primary>d|$bindir/charo record" \
+    "<Super>space|$bindir/charo record" \
     "<Shift><Super>d|$bindir/charo power" \
     "<Primary><Super>d|$bindir/charo engine switch" \
     "<Super>t|$bindir/charo tv"
@@ -173,7 +173,7 @@ fi
 
 printf '\n'
 if [ "$problems" -eq 0 ]; then
-    printf 'Charo is ready. Ctrl+D dictates; see charo --help.\n'
+    printf 'Charo is ready. Super+Space dictates; see charo --help.\n'
 else
     printf '%d item(s) need attention.\n' "$problems"
     exit 1
