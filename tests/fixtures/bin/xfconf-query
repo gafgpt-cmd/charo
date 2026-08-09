@@ -1,0 +1,6 @@
+#!/bin/sh
+printf '%s\n' \
+    '/commands/custom/<Super>space /test/bin/charo record' \
+    '/commands/custom/<Primary><Super>d /test/bin/charo engine switch' \
+    '/commands/custom/<Shift><Super>d /test/bin/charo power' \
+    '/commands/custom/<Super>Escape /test/bin/charo tv'
