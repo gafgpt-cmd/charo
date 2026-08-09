@@ -61,7 +61,7 @@ format_combo() {
         s/<Super>/Super+/g
         s/<Shift>/Shift+/g
         s/<Alt>/Alt+/g
-        s/([[:alpha:]])$/\U\1/
+        s/(^|\+)([[:alpha:]])([[:alpha:]]*)$/\1\U\2\E\3/
     '
 }
 
