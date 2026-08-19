@@ -1,0 +1,32 @@
+# Keep Linux and Windows agreeing on the bytes in this repository.
+#
+# Without this file each machine's core.autocrlf decides line endings, so the same commit checks
+# out differently on Linux and Windows: phantom diffs across every text file, and shell scripts
+# that fail with `bad interpreter` once they pick up CRLF.
+
+* text=auto eol=lf
+
+# Windows-only scripts must KEEP CRLF or they will not run there.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Never transform these.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.pdf  binary
+*.zip  binary
+*.gz   binary
+*.xz   binary
+*.xlsx binary
+*.docx binary
+*.doc  binary
+*.db   binary
+*.sqlite binary
+*.sqlite3 binary
+*.whl  binary
+*.onnx binary
