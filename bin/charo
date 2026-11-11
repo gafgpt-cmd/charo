@@ -14,20 +14,22 @@
 #   charo state             machine-readable: off | idle | recording
 #   charo status            human-readable status
 #
-# TV mode exists because dictation normally sits idle listening for a spoken
-# start phrase, and a television will happily say it. Turning TV mode on parks
-# those wake words - saved and restored, never lost - so dictation starts only
-# from the key or the tray.
+# TV mode pauses hyprwhspr's configured wake listener so dictation starts only
+# from the key or tray while a television is playing.
 #
 # When stdout is not a terminal (hotkeys, tray menu) results are reported as
 # desktop notifications instead of printed.
 set -eu
 
-service="hyprwhspr-on-demand.service"
-hyprwhspr="$HOME/.local/share/hyprwhspr/src/bin/hyprwhspr"
+service="${CHARO_HYPRWHSPR_SERVICE:-hyprwhspr.service}"
+hyprwhspr="${CHARO_HYPRWHSPR_BIN:-}"
+if [ -z "$hyprwhspr" ]; then
+    hyprwhspr=$(command -v hyprwhspr 2>/dev/null || true)
+fi
+if [ -z "$hyprwhspr" ]; then
+    hyprwhspr="$HOME/.local/share/hyprwhspr/src/bin/hyprwhspr"
+fi
 runtime="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/hyprwhspr"
-config="$HOME/.config/hyprwhspr/config.json"
-wakewords="$HOME/.local/share/charo/wake-words.json"
 recording_start_icon="$HOME/.local/share/charo/icons/recording-start.svg"
 recording_stop_icon="$HOME/.local/share/charo/icons/recording.svg"
 
@@ -61,7 +63,7 @@ format_combo() {
         s/<Super>/Super+/g
         s/<Shift>/Shift+/g
         s/<Alt>/Alt+/g
-        s/([[:alpha:]])$/\U\1/
+        s/\+([[:alpha:]])([[:alpha:]]*)$/+\U\1\L\2/
     '
 }
 
@@ -104,41 +106,7 @@ engine_name() {
 }
 
 engine_current() {
-    python3 - "$config" <<'PY'
-import json, sys
-try:
-    with open(sys.argv[1]) as handle:
-        print(json.load(handle).get("transcription_backend", "unknown"))
-except Exception:
-    print("unknown")
-PY
-}
-
-# Rewrite only transcription_backend, preserving every other setting, the file
-# mode, and a restorable copy of the previous configuration.
-engine_write() {
-    python3 - "$config" "$1" <<'PY'
-import json, os, shutil, sys
-
-path, target = sys.argv[1], sys.argv[2]
-with open(path) as handle:
-    config = json.load(handle)
-
-if config.get("transcription_backend") == target:
-    print("unchanged")
-    raise SystemExit(0)
-
-shutil.copy2(path, path + ".pre-engine-switch")
-config["transcription_backend"] = target
-
-tmp = path + ".engine-switch.tmp"
-with open(tmp, "w") as handle:
-    json.dump(config, handle, indent=4)
-    handle.write("\n")
-os.chmod(tmp, 0o600)
-os.replace(tmp, path)
-print("switched")
-PY
+    "$hyprwhspr" backend current 2>/dev/null || printf 'unknown\n'
 }
 
 engine_set() {
@@ -149,120 +117,44 @@ engine_set() {
     fi
 
     label=$(engine_name "$target")
-    if [ "$(engine_write "$target")" = unchanged ]; then
+    if [ "$(engine_current)" = "$target" ]; then
         notify "Already using $label" "" audio-input-microphone
         return 0
     fi
 
-    # A loaded engine keeps serving the old model until it is restarted.
-    if [ "$(state)" != off ]; then
-        systemctl --user restart "$service"
-        notify "Switched to $label" "Reloading the speech model" audio-input-microphone
+    if "$hyprwhspr" backend switch "$target"; then
+        if [ "$(state)" = off ]; then
+            notify "Switched to $label" "Takes effect at the next dictation" audio-input-microphone
+        else
+            notify "Switched to $label" "Speech model reloaded" audio-input-microphone
+        fi
     else
-        notify "Switched to $label" "Takes effect at the next dictation" audio-input-microphone
+        notify "Could not switch to $label" \
+            "Install that backend with hyprwhspr setup, then try again" dialog-error critical
+        exit 1
     fi
 }
 
-# TV mode is derived from the live config: no start phrase and no aliases means
-# nothing is listening for a spoken trigger.
 tv_current() {
-    python3 - "$config" <<'PY'
-import json, sys
-try:
-    with open(sys.argv[1]) as handle:
-        config = json.load(handle)
-except Exception:
-    print("unknown")
-    raise SystemExit(0)
-
-phrase = str(config.get("voice_start_phrase") or "").strip()
-aliases = [str(a).strip() for a in (config.get("voice_start_aliases") or []) if str(a).strip()]
-print("off" if (phrase or aliases) else "on")
-PY
-}
-
-tv_write() {
-    python3 - "$config" "$wakewords" "$1" <<'PY'
-import json, os, shutil, sys
-
-config_path, saved_path, action = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(config_path) as handle:
-    config = json.load(handle)
-
-phrase = str(config.get("voice_start_phrase") or "").strip()
-aliases = [str(a).strip() for a in (config.get("voice_start_aliases") or []) if str(a).strip()]
-listening = bool(phrase or aliases)
-
-if action == "on":
-    if not listening:
-        print("unchanged")
-        raise SystemExit(0)
-    os.makedirs(os.path.dirname(saved_path), exist_ok=True)
-    with open(saved_path, "w") as handle:
-        json.dump(
-            {
-                "voice_start_phrase": config.get("voice_start_phrase", ""),
-                "voice_start_aliases": config.get("voice_start_aliases", []),
-            },
-            handle,
-            indent=2,
-        )
-    config["voice_start_phrase"] = ""
-    config["voice_start_aliases"] = []
-else:
-    if listening:
-        print("unchanged")
-        raise SystemExit(0)
-    try:
-        with open(saved_path) as handle:
-            saved = json.load(handle)
-    except Exception:
-        print("nosaved")
-        raise SystemExit(0)
-    restored_phrase = saved.get("voice_start_phrase", "")
-    restored_aliases = saved.get("voice_start_aliases", [])
-    if not (str(restored_phrase).strip() or restored_aliases):
-        print("nosaved")
-        raise SystemExit(0)
-    config["voice_start_phrase"] = restored_phrase
-    config["voice_start_aliases"] = restored_aliases
-
-shutil.copy2(config_path, config_path + ".pre-tv-mode")
-tmp = config_path + ".tv-mode.tmp"
-with open(tmp, "w") as handle:
-    json.dump(config, handle, indent=4)
-    handle.write("\n")
-os.chmod(tmp, 0o600)
-os.replace(tmp, config_path)
-print("changed")
-PY
+    output=$("$hyprwhspr" tv status 2>/dev/null || true)
+    case "$output" in
+        *'TV mode: on') echo on ;;
+        *'TV mode: off') echo off ;;
+        *) echo unknown ;;
+    esac
 }
 
 tv_set() {
-    case "$(tv_write "$1")" in
-        unchanged)
-            if [ "$1" = on ]; then
-                notify "TV mode already on" "Wake words are already parked" video-display
-            else
-                notify "TV mode already off" "Wake words are active" audio-input-microphone
-            fi
-            ;;
-        nosaved)
-            notify "No saved wake words to restore" \
-                "Set voice_start_phrase with: hyprwhspr config edit" dialog-error
-            exit 1
-            ;;
-        changed)
-            if [ "$(state)" != off ]; then
-                systemctl --user restart "$service"
-            fi
-            if [ "$1" = on ]; then
-                notify "TV mode on" "Wake words parked - dictate with Super+D only" video-display
-            else
-                notify "TV mode off" "Wake words listening again" audio-input-microphone
-            fi
-            ;;
-    esac
+    if ! "$hyprwhspr" tv "$1"; then
+        notify "Could not change TV mode" \
+            "Configure wake phrases with: hyprwhspr wake configure" dialog-error critical
+        exit 1
+    fi
+    if [ "$1" = on ]; then
+        notify "TV mode on" "Wake phrases paused - dictate with Super+D only" video-display
+    else
+        notify "TV mode off" "Wake phrases listening again" audio-input-microphone
+    fi
 }
 
 # The engine may still be loading its model, so retry until it answers.
@@ -383,7 +275,7 @@ case "$cmd" in
             fi
         else
             notify "Dictation did not respond" \
-                "Check: journalctl --user -u hyprwhspr-on-demand -n 50" dialog-error
+                "Check: journalctl --user -u ${service%.service} -n 50" dialog-error
             exit 1
         fi
         ;;

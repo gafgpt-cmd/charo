@@ -1,0 +1,3 @@
+#!/bin/sh
+set -eu
+printf 'notify-send %s\n' "$*" >>"${CHARO_TEST_LOG:?}"

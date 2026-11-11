@@ -1,5 +1,0 @@
-{
-    "recording_mode": "toggle",
-    "silence_timeout": 0,
-    "onnx_asr_use_vad": false
-}

@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+if [ "${1:-}" = "-c" ] && [ "${4:-}" = "/commands/custom" ]; then
+    cat <<'EOF'
+/commands/custom/<Super>space  /home/test/.local/bin/charo record
+/commands/custom/<Primary><Super>d  /home/test/.local/bin/charo engine switch
+/commands/custom/<Shift><Super>d  /home/test/.local/bin/charo power
+/commands/custom/<Super>Escape  /home/test/.local/bin/charo tv
+EOF
+fi

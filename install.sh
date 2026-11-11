@@ -21,8 +21,7 @@ done
 for icon in "$source_dir"/share/icons/*.svg; do
     cp -f "$icon" "$icons/"
 done
-cp -f "$source_dir/share/dictation-defaults.json" "$share/"
-printf 'installed tray icons and dictation defaults into %s\n\n' "$share"
+printf 'installed tray icons into %s\n\n' "$share"
 
 case ":$PATH:" in
     *":$bindir:"*) ;;
