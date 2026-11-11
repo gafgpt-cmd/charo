@@ -1,0 +1,27 @@
+commands:
+  lint: |
+    set -eu
+    files=$(grep -rl '^#!/bin/sh' bin contrib/git-hooks tests install.sh || true)
+    if [ -z "$files" ]; then
+      echo "no shell scripts found - this workflow is looking in the wrong place"
+      exit 1
+    fi
+    echo "$files"
+    # shellcheck disable=SC2086
+    shellcheck -S style $files
+  test: |
+    set -eu
+    tests/charo-cli.sh
+    files=$(grep -rl '^#!/usr/bin/env python3' bin || true)
+    for file in $files; do
+      echo "$file"
+      python3 -m py_compile "$file"
+    done
+    status=0
+    for file in $(grep -rl '^#!' bin contrib/git-hooks tests install.sh || true); do
+      if [ ! -x "$file" ]; then
+        echo "not executable: $file"
+        status=1
+      fi
+    done
+    exit "$status"
