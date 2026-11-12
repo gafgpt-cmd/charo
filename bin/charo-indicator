@@ -82,7 +82,7 @@ def apply_icon(status_icon, state):
     status_icon.set_from_icon_name("audio-input-microphone")
 
 
-SERVICE = "hyprwhspr-on-demand.service"
+SERVICE = os.environ.get("CHARO_HYPRWHSPR_SERVICE", "hyprwhspr.service")
 RUNTIME = os.path.join(
     os.environ.get("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid()), "hyprwhspr"
 )

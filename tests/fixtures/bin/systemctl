@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+printf 'systemctl %s\n' "$*" >>"${CHARO_TEST_LOG:?}"
+case "$*" in
+    "--user --quiet is-active "*)
+        [ "${CHARO_TEST_SERVICE_ACTIVE:-0}" = 1 ]
+        ;;
+    "--user start "*|"--user stop "*) ;;
+    *) printf 'unexpected systemctl call: %s\n' "$*" >&2; exit 2 ;;
+esac

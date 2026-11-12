@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+printf '%s\n' "$*" >>"${CHARO_TEST_LOG:?}"
+case "$*" in
+    "backend current") printf '%s\n' "${CHARO_TEST_BACKEND:-onnx-asr}" ;;
+    "backend switch "*) ;;
+    "tv status") printf 'TV mode: %s\n' "${CHARO_TEST_TV:-off}" ;;
+    "tv on"|"tv off") ;;
+    "record toggle") printf '[SUCCESS] toggled\n' ;;
+    "record status") printf 'Recording: idle\n' ;;
+    *) printf 'unexpected hyprwhspr call: %s\n' "$*" >&2; exit 2 ;;
+esac
