@@ -7,7 +7,8 @@ on:
 
 jobs:
   scripts:
-    runs-on: ubuntu-latest
+    # Public repository: the fallback is GitHub-hosted; the router never publishes a fleet runner here.
+    runs-on: ${{ fromJSON(vars.CI_ROUTE_L || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v4
 
